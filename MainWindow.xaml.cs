@@ -17,6 +17,7 @@ using System.Windows.Shapes;
 using Fingerprint_Attendance.Models;
 using Newtonsoft.Json;
 using zkemkeeper;
+using System.Configuration;
 
 namespace Fingerprint_Attendance
 {
@@ -24,9 +25,9 @@ namespace Fingerprint_Attendance
     {
         // Scanner config
         private static CZKEM zk;
-        public string ip_address;
-        public int port = 4370;
-
+        public string ZK_IP;
+        public int ZK_PORT;
+        public string API_URL;
 
         public MainWindow()
         {
@@ -34,18 +35,19 @@ namespace Fingerprint_Attendance
 
             // INITIALZE FINGERPRINT SCANNER & CONFIG
             zk = new CZKEM();
-            ip_address = "192.168.1.201";
-            port = 4370;
+            ZK_IP = ConfigurationManager.AppSettings["ZK_IP"];
+            ZK_PORT = Convert.ToInt32(ConfigurationManager.AppSettings["ZK_PORT"]);
+            API_URL = ConfigurationManager.AppSettings["API_URL"];
 
             // INITIALIZE CONNECT ON CREATE
-            if (zk.Connect_Net(ip_address, port))
+            if (zk.Connect_Net(ZK_IP, ZK_PORT))
             {
                 Logs.Items.Add("Connected to Device!");
                 ConnectionStatus.Text = "Connected";
                 ConnectionStatus.Foreground = Brushes.LawnGreen;
 
                 // REGISTER FINGERPRINT SCANNER EVENTS
-                if (zk.RegEvent(zk.MachineNumber, 1))
+                if (zk.RegEvent(zk.MachineNumber, 65355))
                 {
                     zk.OnAttTransactionEx += AttendanceTransactionHandler;
                 }
@@ -56,49 +58,57 @@ namespace Fingerprint_Attendance
         {
             StringBuilder sb = new StringBuilder();
 
+            // GENERATE LOG TIME --------------------------------------------------------------------------------------------------------------------
+            DateTime dt = DateTime.Now;
+
+            /*
+                sb.AppendLine("Enroll Number: " + EnrollNumber);
+                sb.AppendLine("Invalid?: " + IsInValid);
+                sb.AppendLine("Attendance State: " + AttState);
+                sb.AppendLine("Verify Method: " + VerifyMethod);
+                sb.AppendLine("Year: " + Year);
+                sb.AppendLine("Month: " + Month);
+                sb.AppendLine("Day: " + Day);
+                sb.AppendLine("Hour: " + Hour);
+                sb.AppendLine("Minute: " + Minute);
+                sb.AppendLine("Second: " + Second);
+                sb.AppendLine("Work Code: " + WorkCode);
+            */
+
             // USER IS VERIFIED
-            if (IsInValid == -1)
+            if (IsInValid <= 0)
             {
                 sb.AppendLine(" ------ [EMPLOYEE LOG] ------");
                 sb.AppendFormat("User ID: {0}", EnrollNumber);
-                sb.AppendFormat("\nLog Time: {0}/{1}/{2} - {3}:{4}:{5}", Month, Day, Year, Hour, Minute, Second);
+                sb.AppendFormat("\nLog Time: {0}", dt.ToLongDateString());
             }
-
-            // PRINT NEW EMPLOYEE ATTENDANCE TO LOGS
             Logs.Items.Add(sb.ToString());
 
+
             // SEND DATA TO SERVER ------------------------------------------------------------------------------------------------------------------
-
-            // CREATE NEW EMPLOYEE OBJECT
-            Employee employee = new Employee();
-
-            // SET EMPLOYEE FIELDS
-            employee.enrollNumber = EnrollNumber;
-            employee.timestamp.day = Day;
-            employee.timestamp.month = Month;
-            employee.timestamp.year = Year;
-            employee.timestamp.hours = Hour;
-            employee.timestamp.minutes = Minute;
-            employee.timestamp.seconds = Second;
+            EmployeeLog el = new EmployeeLog();
+            el.enrollNumber = EnrollNumber;
+            el.timestamp = dt;
+            el.attendanceState = AttState;
 
             // SERIALIZE EMPLOYEE OBJECT TO JSON DATA FORMAT
-            var json = JsonConvert.SerializeObject(employee);
+            var json = JsonConvert.SerializeObject(el);
             var data = new StringContent(json, Encoding.UTF8, "application/json");
 
             // SEND POST REQUEST TO SERVER
             var client = new HttpClient();
-            HttpResponseMessage response = null;
+            HttpResponseMessage response;
 
             try
             {
-                  response = await client.PostAsync("http://localhost:3000/api/employeelogs", data);
-                  // EXPECTED RETURN VALUE IS STATUS CODE
+                  response = await client.PostAsync(API_URL, data);
                   string result = response.Content.ReadAsStringAsync().Result;
+                  Logs.Items.Add(result);
             }
             catch (Exception e)
             {
                 Console.WriteLine(e);
-                Logs.Items.Add("Server failed to process employee attendance log");
+                Logs.Items.Add("ERROR: Server failed to process employeeLog attendance log");
             }            
         }
 
@@ -110,7 +120,7 @@ namespace Fingerprint_Attendance
             {
                 if (zk != null)
                 {
-                    if (zk.Connect_Net(ip_address, port))
+                    if (zk.Connect_Net(ZK_IP, ZK_PORT))
                     {
                         Logs.Items.Add("Connected to Device!");
                         ConnectionStatus.Text = "Connected";
@@ -131,6 +141,11 @@ namespace Fingerprint_Attendance
                 ConnectionStatus.Text = "Disconnected";
                 ConnectionStatus.Foreground = Brushes.Red;
             }
+
+            zk.Disconnect();
+            Logs.Items.Add("Device connection terminated.");
+            ConnectionStatus.Text = "Disconnected";
+            ConnectionStatus.Foreground = Brushes.Red;
         }
 
         private void ClearLogs(object sender, RoutedEventArgs e)
